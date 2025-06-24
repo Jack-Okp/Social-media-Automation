@@ -1,0 +1,258 @@
+{
+  "name": "YouTube-to-Reels Automation",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "triggerTimes": { "item": [{ "hour": 9, "minute": 0 }] } },
+      "name": "Cron Trigger (Daily 09:00)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [100, 100]
+    },
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 250]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{$node[\"Google Drive Search\"].json[\"files\"][0].id}}"
+      },
+      "name": "Google Drive Download CSV",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 1,
+      "position": [400, 100],
+      "credentials": { "googleDriveOAuth2": { "id": "GOOGLE_DRIVE_OAUTH2_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "mode": "file",
+        "options": { "header": true },
+        "binaryProperty": "data"
+      },
+      "name": "CSV to JSON",
+      "type": "n8n-nodes-base.csvFile",
+      "typeVersion": 1,
+      "position": [600, 100]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "query": "name contains 'channels.csv'"
+      },
+      "name": "Google Drive Search",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 1,
+      "position": [200, 100],
+      "credentials": { "googleDriveOAuth2": { "id": "GOOGLE_DRIVE_OAUTH2_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "propertyName": "channelUrl"
+      },
+      "name": "Merge Manual + CSV",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 1,
+      "position": [800, 175]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "channelId": "={{$json[\"channelUrl\"].split(\"/\").pop()}}",
+        "maxResults": 10
+      },
+      "name": "YouTube Video List",
+      "type": "n8n-nodes-base.youtube",
+      "typeVersion": 1,
+      "position": [1000, 175],
+      "credentials": { "youtubeOAuth2Api": { "id": "YOUTUBE_OAUTH2_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            { "value1": "={{Number($json.statistics.viewCount)}}", "operation": "larger", "value2": 100000 },
+            { "value1": "={{($json.statistics.likeCount / $json.statistics.viewCount) * 100}}", "operation": "largerEqual", "value2": 5 }
+          ]
+        }
+      },
+      "name": "IF: Viral?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1200, 175]
+    },
+    {
+      "parameters": {
+        "functionCode": "// pick a 30–60s segment around the highest engagement\nconst duration = Number($json.contentDetails.duration.replace(/PT|S/g, ''));\nconst clipLength = Math.floor(Math.random() * 31) + 30;\nconst start = Math.max(0, Math.floor((duration - clipLength) * Math.random()));\nreturn [{ json: { videoId: $json.id, start, length: clipLength } }];"
+      },
+      "name": "Select Clip Segment",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1400, 175]
+    },
+    {
+      "parameters": {
+        "operation": "convert",
+        "input": "={{$node[\"YouTube Download\"][0].binary.data}}",
+        "options": {
+          "split": {
+            "start": "={{$json.start}}",
+            "duration": "={{$json.length}}"
+          },
+          "filters": [
+            { "filter": "scale", "options": "\"-2:720\"" }
+          ],
+          "overlays": [
+            {
+              "type": "text",
+              "options": {
+                "text": "Le Cracked",
+                "x": "(main_w-text_w)-10",
+                "y": "(main_h-text_h)-10",
+                "fontsize": 24,
+                "fontcolor": "white@0.5"
+              }
+            }
+          ]
+        }
+      },
+      "name": "FFmpeg: Clip + Watermark",
+      "type": "n8n-nodes-base.ffmpeg",
+      "typeVersion": 1,
+      "position": [1600, 175]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "binaryProperty": "output",
+        "folderId": "GOOGLE_DRIVE_TEMP_FOLDER_ID"
+      },
+      "name": "Upload Clip to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 1,
+      "position": [1800, 175],
+      "credentials": { "googleDriveOAuth2": { "id": "GOOGLE_DRIVE_OAUTH2_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "url": "https://api.tiktok.com/upload",
+        "authentication": "oAuth2",
+        "bodyParametersUi": {
+          "parameter": [
+            { "name": "video", "value": "={{$binary.output}}", "type": "binary" },
+            { "name": "caption", "value": "Auto-generated TikTok caption #viral" }
+          ]
+        }
+      },
+      "name": "Post to TikTok",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [2000, 100],
+      "credentials": { "oAuth2Api": { "id": "TIKTOK_OAUTH2_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/me/videos",
+        "method": "POST",
+        "bodyParametersUi": {
+          "parameter": [
+            { "name": "file_url", "value": "={{$json.webContentLink}}" },
+            { "name": "description", "value": "Auto-captioned FB post" },
+            { "name": "scheduled_publish_time", "value": "={{Date.now() + 3600*1000*6}}" }
+          ]
+        }
+      },
+      "name": "Post to Facebook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [2000, 250],
+      "credentials": { "facebookGraphApi": { "id": "FACEBOOK_GRAPH_API_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/instagram_oembed",
+        "method": "POST",
+        "bodyParametersUi": {
+          "parameter": [
+            { "name": "access_token", "value": "={{$credentials.instagramGraphApi.accessToken}}" },
+            { "name": "video_url", "value": "={{$json.webContentLink}}" }
+          ]
+        }
+      },
+      "name": "Post to Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [2000, 400],
+      "credentials": { "instagramGraphApi": { "id": "INSTAGRAM_GRAPH_API_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "title": "={{`Repost: ${$json.title}`}}",
+        "description": "={{`Auto-reposted clip from Le Cracked – enjoy!`}}",
+        "binaryProperty": "output"
+      },
+      "name": "Post to YouTube",
+      "type": "n8n-nodes-base.youtube",
+      "typeVersion": 1,
+      "position": [2000, 550],
+      "credentials": { "youtubeOAuth2Api": { "id": "YOUTUBE_OAUTH2_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "fileId": "={{$node[\"Upload Clip to Drive\"].json.id}}"
+      },
+      "name": "Delete Temp File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 1,
+      "position": [2200, 175],
+      "credentials": { "googleDriveOAuth2": { "id": "GOOGLE_DRIVE_OAUTH2_CREDENTIALS" } }
+    },
+    {
+      "parameters": {
+        "fromEmail": "okpairejackson@gmail.com",
+        "toEmail": "okpairejackson@gmail.com",
+        "subject": "n8n Automation Error",
+        "text": "={{$json[\"errorMessage\"]}}"
+      },
+      "name": "Send Error Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [2400, 175],
+      "credentials": { "smtp": { "id": "SMTP_CREDENTIALS" } }
+    }
+  ],
+  "connections": {
+    "Cron Trigger (Daily 09:00)": { "main": [[{ "node": "Google Drive Search", "type": "main", "index": 0 }]] },
+    "Manual Trigger": { "main": [[{ "node": "Merge Manual + CSV", "type": "main", "index": 0 }]] },
+    "Google Drive Search": { "main": [[{ "node": "Google Drive Download CSV", "type": "main", "index": 0 }]] },
+    "Google Drive Download CSV": { "main": [[{ "node": "CSV to JSON", "type": "main", "index": 0 }]] },
+    "CSV to JSON": { "main": [[{ "node": "Merge Manual + CSV", "type": "main", "index": 1 }]] },
+    "Merge Manual + CSV": { "main": [[{ "node": "YouTube Video List", "type": "main", "index": 0 }]] },
+    "YouTube Video List": { "main": [[{ "node": "IF: Viral?", "type": "main", "index": 0 }]] },
+    "IF: Viral?": {
+      "main": [
+        [{ "node": "Select Clip Segment", "type": "main", "index": 0 }],
+        [{ "node": "Send Error Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Select Clip Segment": { "main": [[{ "node": "FFmpeg: Clip + Watermark", "type": "main", "index": 0 }]] },
+    "FFmpeg: Clip + Watermark": { "main": [[{ "node": "Upload Clip to Drive", "type": "main", "index": 0 }]] },
+    "Upload Clip to Drive": {
+      "main": [
+        [
+          { "node": "Post to TikTok", "type": "main", "index": 0 },
+          { "node": "Post to Facebook", "type": "main", "index": 0 },
+          { "node": "Post to Instagram", "type": "main", "index": 0 },
+          { "node": "Post to YouTube", "type": "main", "index": 0 },
+          { "node": "Delete Temp File", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  }
+}
